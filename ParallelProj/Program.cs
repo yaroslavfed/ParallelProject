@@ -1,55 +1,118 @@
 ﻿using System.Diagnostics;
+using System.Text;
+using Microsoft.Extensions.Logging;
+using NLog.Extensions.Logging;
 
 namespace ParallelProj;
 
 internal class Program
 {
-    static void TimeMetric(string label, Action act)
+    private static readonly ILogger s_logger =
+        LoggerFactory.Create(builder => builder.AddNLog()).CreateLogger<Program>();
+
+    static async Task Main(string[] args)
+    {
+        int n = 5000, m = 5000;
+        s_logger.LogInformation($"Initialize rows & cols [n = {n}, m = {m}]");
+
+        double[][] A = await MatrixCreate(n, m);
+
+        double[][] B = await MatrixCreate(m, n);
+
+        double[][] C = default!;
+
+        await TimeMetric("Matrix multiplication single thread", async () => { C = await MultiplyMatrixSingle(A, B); });
+        // PrintMatrix(C, "Matrix multiplication single thread");
+
+        await TimeMetric("Matrix multiplication parallel TPL", async () => { C = await MultiplyMatrixParallelTPL(A, B); });
+        // PrintMatrix(C, "Matrix multiplication parallel TPL");
+    }
+
+    static Task PrintMatrix(double[][] matrix, string name)
+    {
+        int Rows = matrix.Length;
+        int Cols = matrix[0].Length;
+
+        var sb = new StringBuilder();
+        sb.Append($" {name} |");
+
+        for (int i = 0; i < Rows; i++)
+        {
+            for (int j = 0; j < Cols; j++)
+                sb.Append($" {matrix[i][j]} ");
+            sb.Append("|");
+        }
+
+        s_logger.LogInformation(sb.ToString());
+
+        return Task.CompletedTask;
+    }
+
+    static async Task TimeMetric(string label, Func<Task> act)
     {
         var sw = new Stopwatch();
         sw.Start();
-        act();
+        await act();
         sw.Stop();
-        Console.WriteLine($"{label} : {sw.Elapsed}");
+        s_logger.LogInformation($"{label} : {sw.Elapsed}");
     }
 
-    static void Main(string[] args)
+    static async Task<double[][]> MatrixCreate(int rows, int cols)
     {
-        var n = 3;
-
-        var A = new[,]
+        double[][] result = new double[rows][];
+        for (int i = 0; i < rows; ++i)
         {
-            { 1, 1, 1 },
-            { 3, 3, 3 },
-            { 5, 5, 5 }
-        };
-        var B = new[,]
-        {
-            { 2, 2, 2 },
-            { 4, 4, 4 },
-            { 6, 6, 6 }
-        };
-
-        var C = new int[n, n];
-
-        TimeMetric("Matrix multiplication", () =>
-        {
-            for (int i = 0; i < n; i++)
+            result[i] = new double[cols];
+            for (int j = 0; j < cols; j++)
             {
-                for (int j = 0; j < n; j++)
-                {
-                    C[i, j] = 0;
-                    for (int k = 0; k < n; k++)
-                        C[i, j] += A[i, k] * B[k, j];
-                }
+                result[i][j] = i * j + 1;
             }
-        });
-
-        for (int i = 0; i < n; i++)
-        {
-            for (int j = 0; j < n; j++)
-                Console.Write($"{C[i, j]} ");
-            Console.WriteLine();
         }
+
+        return result;
+    }
+
+    static async Task<double[][]> MultiplyMatrixSingle(double[][] matrixA,
+        double[][] matrixB)
+    {
+        int aRows = matrixA.Length;
+        int aCols = matrixA[0].Length;
+        int bRows = matrixB.Length;
+        int bCols = matrixB[0].Length;
+
+        if (aCols != bRows)
+            throw new Exception("Non conformable");
+
+        double[][] result = await MatrixCreate(aRows, bCols);
+
+        for (int i = 0; i < aRows; ++i)
+            for (int j = 0; j < bCols; ++j)
+                for (int k = 0; k < aCols; ++k)
+                    result[i][j] += matrixA[i][k] * matrixB[k][j];
+
+        return result;
+    }
+
+    static async Task<double[][]> MultiplyMatrixParallelTPL(double[][] matrixA,
+        double[][] matrixB)
+    {
+        int aRows = matrixA.Length;
+        int aCols = matrixA[0].Length;
+        int bRows = matrixB.Length;
+        int bCols = matrixB[0].Length;
+
+        if (aCols != bRows)
+            throw new Exception("Non conformable");
+
+        double[][] result = await MatrixCreate(aRows, bCols);
+
+        Parallel.For(0, aRows, i =>
+            {
+                for (int j = 0; j < bCols; ++j)
+                    for (int k = 0; k < aCols; ++k)
+                        result[i][j] += matrixA[i][k] * matrixB[k][j];
+            }
+        );
+        return result;
     }
 }
